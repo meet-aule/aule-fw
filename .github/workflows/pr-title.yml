@@ -1,0 +1,56 @@
+name: Pull request title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+# This workflow only reads event metadata: no checkout, secrets, or write token.
+permissions: {}
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  title:
+    name: PR title
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check the title
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as event_file:
+              title = json.load(event_file)["pull_request"]["title"]
+
+          errors = []
+          if title != title.strip() or any(ord(c) < 32 or ord(c) == 127 for c in title):
+              errors.append("Use a single line without leading or trailing whitespace.")
+          if len(title) > 120:
+              errors.append("Keep the title within 120 characters.")
+          match = re.fullmatch(
+              r"(feat|fix|docs|refactor|perf|test|build|ci|chore|style|revert)"
+              r"(\([a-z0-9][a-z0-9._/-]*\))?!?: (.+)",
+              title,
+          )
+          if not match:
+              errors.append("Use type(scope): concrete change; the scope is optional.")
+          else:
+              subject = match.group(3)
+              if len(subject) < 10 or len(subject.split()) < 2:
+                  errors.append("Describe the action and what it changes.")
+              if re.match(r"(?i)^(wip|draft|todo|tbd)\b", subject):
+                  errors.append("Replace the placeholder with the actual change.")
+              if subject.casefold() in {
+                  "minor changes", "misc changes", "various fixes", "general improvements",
+                  "update code", "fix bugs", "cambios varios", "actualizar codigo",
+              }:
+                  errors.append("Name the component or behavior instead of a generic update.")
+          for error in errors:
+              print(f"::error::{error}")
+          raise SystemExit(1 if errors else 0)
+          PY

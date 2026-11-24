@@ -1,8 +1,14 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Unbind a previously owned device
-    url: https://github.com/78/xiaozhi-esp32/blob/main/.github/SUPPORT.md#unbind-a-previously-owned-device
-    about: If the device is bound to another account, email its device ID and MAC address privately. Do not post these identifiers in a public issue.
-  - name: Other cloud services and account requests
-    url: https://xiaozhi.me/
-    about: Use the XiaoZhi AI website for activation, agent configuration, voiceprint, voice cloning, and other cloud services
+  - name: Hardware (board, enclosure, ordering)
+    url: https://github.com/meet-aule/aule-hw/issues
+    about: Problems with the Aule board, the dock, the BOM or ordering belong in aule-hw.
+  - name: Server (voice tutor, activation, accounts)
+    url: https://github.com/meet-aule/aule-sw/issues
+    about: Problems with the tutor's answers, device activation or the family API belong in aule-sw.
+  - name: Privacy or security report
+    url: mailto:admin@meetaule.com
+    about: Report privacy or security problems privately by email. Never post device IDs, MAC addresses or recordings in a public issue.
+  - name: xiaozhi-esp32 (upstream)
+    url: https://github.com/78/xiaozhi-esp32/issues
+    about: Problems that also happen on plain xiaozhi firmware, on boards Aule does not add, belong upstream.

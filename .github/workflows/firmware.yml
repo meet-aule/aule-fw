@@ -1,0 +1,79 @@
+name: Firmware build
+
+# Builds the boards Aule uses on our default branch. Upstream's
+# build.yml only runs on `main` and `ci/*`, so it stays out of this branch.
+on:
+  push:
+    branches: [aule]
+  # Every pull request, including ones stacked on another branch.
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aule-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.board }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        board:
+          # The Aule board itself.
+          - aule/aule-v0.2
+          # Development board of our earlier device, used for bench tests until
+          # the Aule board is brought up.
+          - waveshare/esp32-s3-audio-board
+          # Closest upstream board to Aule: ESP32-S3, ES8311, 800 × 480 e-paper.
+          - waveshare/esp32-s3-epaper-3.97
+    container:
+      image: espressif/idf:release-v6.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build
+        shell: bash
+        env:
+          BOARD: ${{ matrix.board }}
+        run: |
+          source "$IDF_PATH/export.sh"
+          python scripts/build.py "$BOARD" --language es-ES
+
+      - name: Artifact name
+        id: name
+        shell: bash
+        env:
+          BOARD: ${{ matrix.board }}
+        # Reference boards keep xiaozhi's default server (its cloud): development only.
+        run: |
+          if [[ "$BOARD" == aule/* ]]; then prefix=aule; else prefix=dev-xiaozhi-cloud; fi
+          echo "value=${prefix}_${BOARD//\//_}_${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.name.outputs.value }}
+          path: build/merged-binary.bin
+          if-no-files-found: error
+          retention-days: 30
+
+  required:
+    name: Firmware CI
+    needs: build
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every board build to pass
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          printf 'Board builds=%s\n' "$BUILD_RESULT"
+          test "$BUILD_RESULT" = success

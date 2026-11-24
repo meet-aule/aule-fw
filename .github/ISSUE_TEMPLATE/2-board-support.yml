@@ -1,0 +1,36 @@
+name: Board support
+description: Run Aule's tutor on another ESP32 board.
+title: "[Board]: "
+labels: ["board support"]
+body:
+  - type: input
+    id: board
+    attributes:
+      label: Board name and link
+    validations:
+      required: true
+  - type: dropdown
+    id: xiaozhi
+    attributes:
+      label: Is it already supported by xiaozhi-esp32?
+      options:
+        - "Yes"
+        - "No"
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware
+      description: Chip, flash and PSRAM size, audio codec, microphones, display, touch.
+    validations:
+      required: true
+  - type: dropdown
+    id: help
+    attributes:
+      label: Can you test on this board?
+      options:
+        - "Yes, and I can send a pull request"
+        - "Yes, I can test"
+        - "No"

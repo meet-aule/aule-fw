@@ -1,0 +1,86 @@
+name: Code quality
+
+on:
+  push:
+    branches: [aule]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '37 14 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image-converter:
+    name: Image converter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: scripts/Image_Converter
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install the system Python and Tk libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk python3-venv
+      - name: Install the converter's pinned dependencies
+        run: |
+          /usr/bin/python3 -m venv "$RUNNER_TEMP/image-converter-venv"
+          "$RUNNER_TEMP/image-converter-venv/bin/python" -m pip install --requirement requirements.txt
+      - name: Exercise the real Pillow to LVGL conversion
+        run: |
+          "$RUNNER_TEMP/image-converter-venv/bin/python" -m unittest discover -s tests -v
+
+  firmware:
+    name: Cppcheck and build tooling
+    # Forks and non-default branches never use the shared server.
+    runs-on: ${{ github.ref == 'refs/heads/aule' && github.event_name != 'pull_request' && vars.AULE_QUALITY_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      security-events: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Host test libraries
+        if: ${{ runner.environment == 'github-hosted' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcjson-dev libmbedtls-dev
+      - name: Test build tooling
+        run: python -m unittest discover -s scripts/tests -v
+      - name: Install Cppcheck
+        run: bash scripts/ci/install-cppcheck.sh
+      - name: Analyze the Aule board
+        run: |
+          mkdir -p reports
+          cppcheck --std=c++23 --platform=unix32 --enable=warning,performance,portability \
+            --error-exitcode=1 --output-format=sarif \
+            main/boards/aule/aule-v0.2 2> reports/cppcheck.sarif
+      - uses: github/codeql-action/upload-sarif@v4
+        if: ${{ !cancelled() && github.event_name != 'pull_request' && hashFiles('reports/cppcheck.sarif') != '' }}
+        with:
+          sarif_file: reports/cppcheck.sarif
+          category: cppcheck-aule
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: cppcheck-report
+          path: reports/cppcheck.sarif
+          if-no-files-found: error
+          retention-days: 14

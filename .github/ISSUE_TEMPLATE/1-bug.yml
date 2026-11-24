@@ -1,0 +1,59 @@
+name: Bug report
+description: The firmware builds, flashes or behaves wrongly.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Do not include device IDs, MAC addresses, Wi-Fi names, tokens or recordings of children.
+  - type: dropdown
+    id: board
+    attributes:
+      label: Board
+      options:
+        - Aule v0.2
+        - Waveshare ESP32-S3 Audio Board
+        - Waveshare ESP32-S3 e-Paper 3.97
+        - Other (say which below)
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Where it fails
+      options:
+        - Building
+        - Flashing
+        - Booting or Wi-Fi setup
+        - Voice (wake word, listening, speaking)
+        - Display or touch
+        - Updates over the air
+        - Battery or power
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Firmware version or commit
+      placeholder: e.g. 2.6.0, or the commit SHA / CI run you flashed
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. ...\n2. ..."
+  - type: textarea
+    id: logs
+    attributes:
+      label: Serial log
+      description: Output of `idf.py monitor` or the browser console around the failure.
+      render: text
