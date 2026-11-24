@@ -37,9 +37,11 @@ jobs:
               r"(\([a-z0-9][a-z0-9._/-]*\))?!?: (.+)",
               title,
           )
+          # scripts/version.py titles release pull requests with the version alone.
+          release = re.fullmatch(r"chore\(release\): [0-9]+\.[0-9]+\.[0-9]+", title)
           if not match:
               errors.append("Use type(scope): concrete change; the scope is optional.")
-          else:
+          elif not release:
               subject = match.group(3)
               if len(subject) < 10 or len(subject.split()) < 2:
                   errors.append("Describe the action and what it changes.")

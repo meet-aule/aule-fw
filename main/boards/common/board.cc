@@ -1,5 +1,6 @@
 #include "board.h"
 #include "assets/lang_config.h"
+#include "aule_git_sha.h"
 #include "display/display.h"
 #include "settings.h"
 #include "system_info.h"
@@ -114,6 +115,7 @@ std::string Board::GetSystemInfoJson() {
                 "compile_time": "2021-01-01T00:00:00Z"
                 "idf_version": "4.2-dev"
                 "elf_sha256": ""
+                "commit": "0123456789ab"
             },
             "partition_table": [
                 "app": {
@@ -160,7 +162,9 @@ std::string Board::GetSystemInfoJson() {
         snprintf(sha256_str + i * 2, sizeof(sha256_str) - i * 2, "%02x",
                  app_desc->app_elf_sha256[i]);
     }
-    json += R"("elf_sha256":")" + std::string(sha256_str) + R"(")";
+    json += R"("elf_sha256":")" + std::string(sha256_str) + R"(",)";
+    // Aule adds the commit for whoever reads the report; updates compare only the version.
+    json += R"("commit":")" + std::string(kAuleGitSha) + R"(")";
     json += R"(},)";
 
     json += R"("partition_table": [)";

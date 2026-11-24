@@ -1288,6 +1288,19 @@ if(NOT CMAKE_BUILD_EARLY_EXPANSION)
     endif()
 endif()
 
+# The commit the firmware is built from. scripts/build.py passes the first 12 characters of
+# its SHA, and anything else becomes "unknown". It goes into one generated source file, not
+# into the definitions above, so a new commit recompiles that file instead of all of main.
+if(NOT CMAKE_BUILD_EARLY_EXPANSION)
+    string(LENGTH "${AULE_GIT_SHA}" AULE_GIT_SHA_LENGTH)
+    if(NOT AULE_GIT_SHA MATCHES "^[0-9a-f]+$" OR NOT AULE_GIT_SHA_LENGTH EQUAL 12)
+        set(AULE_GIT_SHA "unknown")
+    endif()
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/aule_git_sha.cc.in"
+                   "${CMAKE_CURRENT_BINARY_DIR}/aule_git_sha.cc" @ONLY)
+    target_sources(${COMPONENT_LIB} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/aule_git_sha.cc")
+endif()
+
 # Add generation rules
 add_custom_command(
     OUTPUT ${LANG_HEADER}

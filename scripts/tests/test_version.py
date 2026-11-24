@@ -1,0 +1,646 @@
+"""Exercise scripts/version.py and the workflows around it.
+
+The release tests run the real command in a scratch git repository with its own origin and a
+stand-in for gh, so nothing leaves this machine.
+"""
+
+import datetime
+import importlib.util
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import textwrap
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def load(name):
+    spec = importlib.util.spec_from_file_location(name, ROOT / f"scripts/{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+version = load("version")
+build = load("build")
+
+URL = "https://github.com/meet-aule/aule-fw"
+CMAKE = 'project(test)\nset(PROJECT_VER "{}")  # x-aule-version\n'
+V001 = "## 0.0.1 (2026-11-24)\n\nFirst numbered version.\n\n* it boots\n"
+V002 = (
+    f"## [0.0.2]({URL}/compare/aule-v0.0.1...aule-v0.0.2) (2026-11-25)\n\n"
+    "### Features\n\n* **board:** read the battery level\n"
+)
+DATE = datetime.date(2026, 11, 25)
+
+
+def changelog(*sections):
+    return "# Changelog\n\n" + "\n".join(sections)
+
+
+def changes(*commits):
+    parsed = [version.parse_commit(*c) if isinstance(c, tuple) else version.parse_commit(c)
+              for c in commits]
+    return [change for change in parsed if change]
+
+
+class Scratch:
+    """A temporary root holding a CMakeLists.txt and a CHANGELOG.md."""
+
+    @staticmethod
+    def root(test, project_version="0.0.1", text=None):
+        directory = tempfile.TemporaryDirectory()
+        test.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        (root / "CMakeLists.txt").write_text(CMAKE.format(project_version), encoding="utf-8")
+        (root / "CHANGELOG.md").write_text(
+            changelog(V001) if text is None else text, encoding="utf-8"
+        )
+        return root
+
+
+class RepositoryTests(unittest.TestCase):
+    def test_this_repository_passes_the_check(self):
+        self.assertEqual(version.check(ROOT), [])
+
+    def test_build_scripts_still_read_the_marked_version(self):
+        current = version.current_version(ROOT)
+        self.assertEqual(build.get_project_version(), current)
+        # docker/firmware-builder reads it with its own pattern.
+        cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        match = re.search(r'^set\(PROJECT_VER\s+"([^"]+)"\)', cmake, re.MULTILINE)
+        self.assertEqual(match.group(1), current)
+
+    def test_release_body_for_the_current_version(self):
+        text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        body = version.changelog_section(text, version.current_version(ROOT))
+        self.assertIn("\n* ", "\n" + body)
+        self.assertTrue(body.startswith(f"## {version.current_version(ROOT)} ("))
+
+    def test_releasing_says_how_to_tag_the_first_release(self):
+        # version.py points here when a branch has no release tag.
+        releasing = (ROOT / "RELEASING.md").read_text(encoding="utf-8")
+        self.assertIn("`git tag aule-v0.0.1 <its SHA> && git push origin aule-v0.0.1`", releasing)
+
+
+class CheckTests(unittest.TestCase):
+    def test_versions_that_agree_pass(self):
+        root = Scratch.root(self, "0.0.2", changelog(V002, V001))
+        self.assertEqual(version.check(root), [])
+
+    def test_each_problem_is_named(self):
+        link = f"{URL}/compare/aule-v0.0.1...aule-v0.0.2"
+        cases = [
+            ("0.0.1", "# Changes\n\n" + V001, "first line must be '# Changelog'"),
+            ("0.0.1", changelog("## 0.0.1\n\n* it boots\n"), "write version headings"),
+            ("0.0.1", changelog("## v0.0.1 (2026-11-24)\n\n* x\n"), "write version headings"),
+            ("0.0.1", changelog("## 0.0.1-dev (2026-11-24)\n\n* x\n"), "write version headings"),
+            ("0.0.1", changelog("## [](https://x) (2026-11-24)\n\n* x\n"), "write version headings"),
+            ("0.0.1", changelog("## 0.0.1 (2026-13-01)\n\n* x\n"), "is not a YYYY-MM-DD date"),
+            # Python 3.11 and later read these with date.fromisoformat.
+            ("0.0.1", changelog("## 0.0.1 (20261124)\n\n* x\n"), "is not a YYYY-MM-DD date"),
+            ("0.0.1", changelog("## 0.0.1 (2026-W48-2)\n\n* x\n"), "is not a YYYY-MM-DD date"),
+            ("0.0.1", changelog("## 0.0.1 (2026-11-24T00:00)\n\n* x\n"), "is not a YYYY-MM-DD date"),
+            ("0.0.2", changelog(V001, V002), "newest first"),
+            ("0.0.1", changelog(V001, V001), "each version once"),
+            ("0.0.1", changelog("## 0.0.1 (2026-11-24)\n\nFirst.\n"), "0.0.1 lists no changes"),
+            ("0.0.2", changelog(f"## [0.0.2]({link}) (2026-11-25)\n\n### Features\n\n"
+                                "### Bug Fixes\n\n* x\n", V001),
+             "the Features section is empty"),
+            ("0.0.2", changelog(f"## [0.0.2]({link}) (2026-11-25)\n\n### Misc\n\n* x\n", V001),
+             "unknown section 'Misc'"),
+            ("0.0.2", changelog(f"## [0.0.2]({link}) (2026-11-25)\n\n### Bug Fixes\n\n* a\n\n"
+                                "### Features\n\n* b\n", V001),
+             "sections go in this order"),
+            ("0.0.1", changelog("## 0.0.1 (2026-11-24)\n\n* x\n*\n"), "empty bullet"),
+            ("0.0.1", changelog("## 0.0.1 (2026-11-24)\n\n- x\n"), "start bullets with '* '"),
+            ("0.0.1", "# Changelog\n\nAll notable changes.\n\n" + V001, "only blank lines"),
+            ("0.0.2", changelog(V002.replace("aule-v0.0.1...", "v0.0.1..."), V001),
+             f"the link should be {link}"),
+            ("0.0.2", changelog(V002), "the oldest version has nothing to compare"),
+            ("0.0.2", changelog(V001),
+             "the newest version is 0.0.1, but CMakeLists.txt says 0.0.2"),
+            ("0.0.1-dev", changelog(V001), "digits only"),
+        ]
+        for project_version, text, expected in cases:
+            with self.subTest(expected=expected):
+                errors = version.check(Scratch.root(self, project_version, text))
+                self.assertTrue(any(expected in error for error in errors), errors)
+
+    def test_the_source_line_needs_its_marker(self):
+        root = Scratch.root(self)
+        (root / "CMakeLists.txt").write_text('set(PROJECT_VER "0.0.1")\n', encoding="utf-8")
+        self.assertIn("found 0", version.check(root)[0])
+        (root / "CMakeLists.txt").write_text(CMAKE.format("0.0.1") * 2, encoding="utf-8")
+        self.assertIn("found 2", version.check(root)[0])
+
+    def test_command_exits_1_and_says_why(self):
+        root = Scratch.root(self)
+        (root / "scripts").mkdir()
+        shutil.copy(ROOT / "scripts/version.py", root / "scripts/version.py")
+        command = [sys.executable, str(root / "scripts/version.py"), "check"]
+        result = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "0.0.1: CMakeLists.txt and CHANGELOG.md agree\n")
+
+        (root / "CMakeLists.txt").write_text(CMAKE.format("0.0.2"), encoding="utf-8")
+        result = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("the newest version is 0.0.1, but CMakeLists.txt says 0.0.2", result.stderr)
+
+
+class SetTests(unittest.TestCase):
+    def test_set_rewrites_only_the_version(self):
+        root = Scratch.root(self)
+        shutil.copy(ROOT / "CMakeLists.txt", root / "CMakeLists.txt")
+        old = version.current_version(root)
+        before = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+
+        self.assertEqual(version.set_version(root, "9.8.7"), [("CMakeLists.txt", old, "9.8.7")])
+
+        after = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+        marked = '")  # x-aule-version'
+        self.assertEqual(after, before.replace(f'"{old}{marked}', f'"9.8.7{marked}'))
+        self.assertEqual(version.current_version(root), "9.8.7")
+        # The changelog has not caught up, and the check says so.
+        self.assertIn("but CMakeLists.txt says 9.8.7", "\n".join(version.check(root)))
+
+    def test_set_refuses_versions_the_device_cannot_compare(self):
+        root = Scratch.root(self)
+        for bad in ("0.0.2-dev", "0.0.2+abc1234", "1.0", "01.0.0", "v0.0.2", ""):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                version.set_version(root, bad)
+        self.assertEqual(version.current_version(root), "0.0.1")
+
+
+class NextTests(unittest.TestCase):
+    def test_commit_subjects_are_read(self):
+        self.assertEqual(
+            version.parse_commit("feat(board): read the battery level (#14)"),
+            version.Change("feat", "board", "read the battery level", "14", False),
+        )
+        self.assertEqual(
+            version.parse_commit("fix: keep the LED on"),
+            version.Change("fix", None, "keep the LED on", None, False),
+        )
+        self.assertTrue(version.parse_commit("feat(ota)!: drop activation v1 (#20)").breaking)
+        self.assertTrue(version.parse_commit(
+            "refactor: rename the board", "Why.\n\nBREAKING CHANGE: the board type changed"
+        ).breaking)
+        self.assertFalse(version.parse_commit(
+            "docs: explain flashing", "This is not a BREAKING CHANGE: only prose"
+        ).breaking)
+        # Only the release PRs themselves are left out, not every change scoped to releases.
+        self.assertEqual(
+            version.parse_commit("chore(release): pin the gh CLI version (#30)"),
+            version.Change("chore", "release", "pin the gh CLI version", "30", False),
+        )
+        for subject in (
+            "Merge pull request #5 from meet-aule/chore/org-rename",
+            "Update README.md",
+            "chore(release): 0.0.2 (#21)",
+            "chore(release): 0.10.0",
+            "wip: try something",
+            "feat:no space",
+        ):
+            with self.subTest(subject=subject):
+                self.assertIsNone(version.parse_commit(subject))
+
+    def test_bumps_before_1_0(self):
+        cases = [
+            (["fix: keep the LED on"], "0.0.2"),
+            (["feat(board): read the battery level"], "0.0.2"),
+            (["feat(ota)!: drop activation v1", "fix: keep the LED on"], "0.1.0"),
+            ([("refactor: rename", "BREAKING CHANGE: the board type changed")], "0.1.0"),
+            (["docs: explain flashing", "chore: tidy", "perf: reuse a buffer"], "0.0.1"),
+            (["chore(release): 0.0.2"], "0.0.1"),
+            ([], "0.0.1"),
+        ]
+        for commits, expected in cases:
+            with self.subTest(commits=commits):
+                self.assertEqual(version.next_version("0.0.1", changes(*commits)), expected)
+
+    def test_1_0_is_never_automatic(self):
+        self.assertEqual(version.next_version("0.9.3", changes("feat!: new protocol")), "0.10.0")
+
+    def test_bumps_from_1_0(self):
+        self.assertEqual(version.next_version("1.0.0", changes("feat!: new protocol")), "2.0.0")
+        self.assertEqual(version.next_version("1.0.0", changes("feat: add a screen")), "1.1.0")
+        self.assertEqual(version.next_version("1.0.0", changes("fix: keep the LED")), "1.0.1")
+        self.assertEqual(version.next_version("1.0.0", changes("docs: explain")), "1.0.0")
+
+
+class NotesTests(unittest.TestCase):
+    COMMITS = (
+        "fix(board): keep the status LED on after a reconnect (#16)",
+        "docs: explain flashing by USB (#17)",
+        "feat(ota)!: drop activation version 1 (#20)",
+        "feat: show the commit in the boot log (#15)",
+        "feat(board): read the battery level (#14)",
+        "ci(actions): update checkout (#18)",
+        "refactor(audio): split the codec setup (#19)",
+        "perf(audio): reuse the resample buffer (#22)",
+        "revert: restore the old wake word (#23)",
+        "chore(release): 0.0.2 (#21)",
+        "Merge branch 'main' into aule",
+    )
+
+    def test_sections_bullets_and_links(self):
+        notes = version.format_notes("0.1.0", "0.0.1", changes(*self.COMMITS), DATE)
+        self.assertEqual(notes, textwrap.dedent(f"""\
+            ## [0.1.0]({URL}/compare/aule-v0.0.1...aule-v0.1.0) (2026-11-25)
+
+            ### ⚠ BREAKING CHANGES
+
+            * **ota:** drop activation version 1 ([#20]({URL}/pull/20))
+
+            ### Features
+
+            * **board:** read the battery level ([#14]({URL}/pull/14))
+            * show the commit in the boot log ([#15]({URL}/pull/15))
+
+            ### Bug Fixes
+
+            * **board:** keep the status LED on after a reconnect ([#16]({URL}/pull/16))
+
+            ### Performance
+
+            * **audio:** reuse the resample buffer ([#22]({URL}/pull/22))
+
+            ### Reverts
+
+            * restore the old wake word ([#23]({URL}/pull/23))
+
+            ### Documentation
+
+            * explain flashing by USB ([#17]({URL}/pull/17))
+
+            ### Chores
+
+            * **actions:** update checkout ([#18]({URL}/pull/18))
+            * **audio:** split the codec setup ([#19]({URL}/pull/19))
+            """))
+
+    def test_notes_added_to_the_changelog_pass_the_check(self):
+        root = Scratch.root(self)
+        version.set_version(root, "0.1.0")
+        version.add_to_changelog(
+            root, version.format_notes("0.1.0", "0.0.1", changes(*self.COMMITS), DATE)
+        )
+        self.assertEqual(version.check(root), [])
+        text = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("# Changelog\n\n## [0.1.0]("))
+        self.assertIn(f"([#19]({URL}/pull/19))\n\n## 0.0.1 (2026-11-24)\n", text)
+
+    def test_the_first_version_has_no_comparison(self):
+        notes = version.format_notes("0.0.1", None, changes("fix: keep the LED on"), DATE)
+        self.assertEqual(notes, "## 0.0.1 (2026-11-25)\n\n### Bug Fixes\n\n* keep the LED on\n")
+
+    def test_nothing_to_list(self):
+        with self.assertRaises(ValueError):
+            version.format_notes("0.0.2", "0.0.1", changes("chore(release): 0.0.2"), DATE)
+
+    def test_changes_to_releasing_are_listed(self):
+        notes = version.format_notes("0.0.2", "0.0.1", changes(
+            "chore(release): 0.0.2 (#21)",
+            "chore(release): pin the gh CLI version (#30)",
+            "fix: keep the LED on (#31)",
+        ), DATE)
+        self.assertIn(f"### Chores\n\n* **release:** pin the gh CLI version ([#30]({URL}/pull/30))",
+                      notes)
+        self.assertNotIn("#21", notes)
+
+    def test_section_is_the_body_with_its_heading(self):
+        text = changelog(V002, V001)
+        self.assertEqual(version.changelog_section(text, "0.0.2"), V002)
+        self.assertEqual(version.changelog_section(text, "0.0.1"), V001)
+        with self.assertRaises(ValueError):
+            version.changelog_section(text, "0.0.3")
+
+
+@unittest.skipUnless(shutil.which("git"), "requires git")
+class ReleaseTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        base = Path(directory.name)
+        # Keep the user's git configuration (signing, hooks, identity) out of the test.
+        self.env = {key: value for key, value in os.environ.items()
+                    if not key.startswith("GIT_")}
+        self.env.update({
+            "HOME": str(base), "XDG_CONFIG_HOME": str(base), "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_AUTHOR_NAME": "Aule", "GIT_AUTHOR_EMAIL": "test@example.com",
+            "GIT_COMMITTER_NAME": "Aule", "GIT_COMMITTER_EMAIL": "test@example.com",
+        })
+        self.repo = base / "aule-fw"
+        self.repo.mkdir()
+        self.git("init", "--quiet", "--bare", str(base / "origin.git"))
+        self.git("init", "--quiet")
+        self.git("symbolic-ref", "HEAD", "refs/heads/aule")
+        self.git("remote", "add", "origin", str(base / "origin.git"))
+        (self.repo / "scripts").mkdir()
+        shutil.copy(ROOT / "scripts/version.py", self.repo / "scripts/version.py")
+        (self.repo / "CMakeLists.txt").write_text(CMAKE.format("0.0.1"), encoding="utf-8")
+        (self.repo / "CHANGELOG.md").write_text(changelog(V001), encoding="utf-8")
+        (self.repo / "README.md").write_text("Aule\n", encoding="utf-8")
+        self.commit("chore: reset the firmware version to 0.0.1 (#12)")
+        self.git("tag", "aule-v0.0.1")
+        # Upstream's tags are not releases of this repository.
+        self.git("tag", "v2.6.0")
+        self.commit("feat(board): read the battery level (#14)")
+        self.commit("fix: keep the status LED on (#15)")
+        self.commit("docs: explain flashing by USB (#16)")
+        self.git("push", "--quiet", "--tags", "origin", "aule")
+
+    def git(self, *args):
+        result = subprocess.run(["git", *args], cwd=self.repo, env=self.env,
+                                capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+
+    def commit(self, subject):
+        self.git("add", "--all")
+        self.git("commit", "--quiet", "--allow-empty", "-m", subject)
+
+    def tool(self, *args, env=None):
+        return subprocess.run([sys.executable, "scripts/version.py", *args], cwd=self.repo,
+                              env=env or self.env, capture_output=True, text=True)
+
+    def test_next_and_notes_read_the_commits_since_the_last_tag(self):
+        result = self.tool("next")
+        self.assertEqual((result.returncode, result.stdout), (0, "0.0.2\n"), result.stderr)
+        notes = self.tool("notes").stdout
+        self.assertTrue(notes.startswith(f"## [0.0.2]({URL}/compare/aule-v0.0.1...aule-v0.0.2) ("))
+        self.assertIn(f"### Features\n\n* **board:** read the battery level ([#14]({URL}/pull/14))",
+                      notes)
+        self.assertIn("### Documentation\n\n* explain flashing by USB", notes)
+        self.assertNotIn("reset the firmware version", notes)
+
+    def test_release_commits_the_version_and_changelog_on_a_branch(self):
+        aule = self.git("rev-parse", "aule")
+        result = self.tool("release")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        self.assertEqual(self.git("rev-parse", "--abbrev-ref", "HEAD"), "release/0.0.2")
+        self.assertEqual(self.git("log", "-1", "--format=%s"), "chore(release): 0.0.2")
+        self.assertEqual(self.git("rev-parse", "HEAD~1"), aule)
+        self.assertEqual(self.git("rev-parse", "aule"), aule)
+        self.assertEqual(self.git("diff", "--name-only", "HEAD~1", "HEAD").split(),
+                         ["CHANGELOG.md", "CMakeLists.txt"])
+        self.assertIn('set(PROJECT_VER "0.0.2")  # x-aule-version',
+                      (self.repo / "CMakeLists.txt").read_text(encoding="utf-8"))
+        self.assertRegex(
+            (self.repo / "CHANGELOG.md").read_text(encoding="utf-8"),
+            r"^# Changelog\n\n## \[0\.0\.2\]\(" + re.escape(f"{URL}/compare/aule-v0.0.1...")
+            + r"aule-v0\.0\.2\) \(\d{4}-\d{2}-\d{2}\)\n",
+        )
+        self.assertEqual(self.tool("check").returncode, 0)
+        # Without --push, nothing leaves the machine.
+        self.assertEqual(self.git("ls-remote", "--heads", "origin", "release/0.0.2"), "")
+
+    def test_release_push_opens_the_pr_with_gh(self):
+        bin_dir = self.repo.parent / "bin"
+        bin_dir.mkdir()
+        log = self.repo.parent / "gh.json"
+        gh = bin_dir / "gh"
+        gh.write_text(textwrap.dedent(f"""\
+            #!{sys.executable}
+            import json, sys
+            with open({str(log)!r}, "w") as call:
+                json.dump({{"args": sys.argv[1:], "stdin": sys.stdin.read()}}, call)
+            print("https://github.com/meet-aule/aule-fw/pull/99")
+            """), encoding="utf-8")
+        gh.chmod(0o755)
+        env = dict(self.env, PATH=f"{bin_dir}{os.pathsep}{self.env['PATH']}")
+
+        result = self.tool("release", "--push", env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        call = json.loads(log.read_text(encoding="utf-8"))
+        self.assertEqual(call["args"], [
+            "pr", "create", "--repo", "meet-aule/aule-fw", "--base", "aule",
+            "--head", "release/0.0.2", "--title", "chore(release): 0.0.2", "--body-file", "-",
+        ])
+        self.assertTrue(call["stdin"].startswith("## [0.0.2]("))
+        self.assertIn(call["stdin"], (self.repo / "CHANGELOG.md").read_text(encoding="utf-8"))
+        self.assertIn("https://github.com/meet-aule/aule-fw/pull/99", result.stdout)
+        self.assertNotEqual(self.git("ls-remote", "--heads", "origin", "release/0.0.2"), "")
+
+    def test_release_refuses_an_unsafe_start(self):
+        def refuses(expected, *args):
+            result = self.tool("release", *args)
+            self.assertEqual(result.returncode, 1, result.stdout)
+            self.assertIn(expected, result.stderr)
+            self.assertEqual(self.git("branch", "--list", "release/*"), "")
+
+        with self.subTest("uncommitted changes"):
+            (self.repo / "README.md").write_text("Aule, edited\n", encoding="utf-8")
+            refuses("commit or stash your changes first")
+            self.git("checkout", "--", "README.md")
+        with self.subTest("another branch"):
+            self.git("switch", "--quiet", "-c", "feature")
+            refuses("switch to aule first (this is feature)")
+            self.git("switch", "--quiet", "aule")
+        with self.subTest("ahead of GitHub"):
+            self.commit("feat: not pushed yet")
+            refuses("bring aule up to date with origin first")
+            self.git("reset", "--quiet", "--hard", "HEAD~1")
+        with self.subTest("an older version"):
+            refuses("nothing to release: 0.0.1 is not newer than 0.0.1", "0.0.1")
+        with self.subTest("a version the device cannot compare"):
+            refuses("not a version like 1.2.3", "0.0.2-dev")
+        with self.subTest("nothing that bumps the version"):
+            self.git("reset", "--quiet", "--hard", "aule-v0.0.1")
+            self.commit("docs: explain flashing by USB (#16)")
+            self.git("push", "--quiet", "--force", "origin", "aule")
+            refuses("nothing to release: 0.0.1 is not newer than 0.0.1")
+        with self.subTest("no release tag"):
+            self.git("push", "--quiet", "origin", ":refs/tags/aule-v0.0.1")
+            self.git("tag", "--delete", "aule-v0.0.1")
+            refuses("no aule-vX.Y.Z tag")
+            refuses("tag the first release as RELEASING.md says")
+
+
+class ReleaseTitleTests(unittest.TestCase):
+    """pr-title.yml accepts the release PR's title, which is the version alone."""
+
+    @classmethod
+    def setUpClass(cls):
+        workflow = (ROOT / ".github/workflows/pr-title.yml").read_text(encoding="utf-8")
+        start = workflow.index("python3 - <<'PY'\n") + len("python3 - <<'PY'\n")
+        cls.script = textwrap.dedent(workflow[start:workflow.index("\n          PY", start)])
+
+    def passes(self, title):
+        with tempfile.TemporaryDirectory() as directory:
+            event = Path(directory) / "event.json"
+            event.write_text(json.dumps({"pull_request": {"title": title}}), encoding="utf-8")
+            result = subprocess.run([sys.executable, "-c", self.script], capture_output=True,
+                                    text=True, env=dict(os.environ, GITHUB_EVENT_PATH=str(event)))
+        return result.returncode == 0
+
+    def test_release_titles_pass(self):
+        for title in ("chore(release): 0.0.2", "chore(release): 1.12.0"):
+            with self.subTest(title=title):
+                self.assertTrue(self.passes(title))
+
+    def test_other_short_titles_still_fail(self):
+        for title in ("chore(release): 0.0", "chore(release): soon", "chore(release): 0.0.2-dev",
+                      "chore: 0.0.2", "fix(release): 0.0.2", "chore(release): 0.0.2 "):
+            with self.subTest(title=title):
+                self.assertFalse(self.passes(title))
+
+    def test_ordinary_titles_are_unchanged(self):
+        self.assertTrue(self.passes("fix(board): keep the status LED on after a reconnect"))
+        self.assertFalse(self.passes("fix: update code"))
+
+
+class ReleaseWorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self.workflow = (ROOT / ".github/workflows/aule-release.yml").read_text(encoding="utf-8")
+
+    def job(self, name):
+        """One job's text, up to the next job."""
+        start = self.workflow.index(f"\n  {name}:\n") + 1
+        following = re.search(r"^  [a-z-]+:\n", self.workflow[start + 1:], re.MULTILINE)
+        return self.workflow[start:start + 1 + following.start()] if following else (
+            self.workflow[start:])
+
+    def test_build_and_release_use_the_commit_that_set_the_version(self):
+        prepare, build_job, release = self.job("prepare"), self.job("build"), self.job("release")
+        # In a shallow clone, git log would name the newest commit.
+        self.assertIn("fetch-depth: 0", prepare)
+        self.assertIn("commit: ${{ steps.version.outputs.commit }}", prepare)
+        commit = "${{ needs.prepare.outputs.commit }}"
+        self.assertIn(f"ref: {commit}", build_job)
+        self.assertIn(f"AULE_COMMIT: {commit}", build_job)
+        self.assertIn(f"ref: {commit}", release)
+        self.assertIn(f"COMMIT: {commit}", release)
+        self.assertIn('--target "$COMMIT"', release)
+        # Nothing builds or tags whatever happens to be newest on the branch.
+        self.assertNotIn("GITHUB_SHA", self.workflow)
+
+    def test_runs_when_the_version_source_changes(self):
+        self.assertIn(f"branches: [{version.DEFAULT_BRANCH}]", self.workflow)
+        self.assertIn(f"paths: [{version.VERSION_FILES[0][0]}]", self.workflow)
+        self.assertIn("workflow_dispatch:", self.workflow)
+        self.assertIn(f'tag="{version.TAG_PREFIX}$version"', self.workflow)
+
+    def test_safety_rails(self):
+        self.assertIn(f"github.repository == '{version.REPOSITORY}'", self.workflow)
+        self.assertIn(f"github.ref == 'refs/heads/{version.DEFAULT_BRANCH}'", self.workflow)
+        self.assertIn("concurrency:\n  group: release\n  cancel-in-progress: false\n",
+                      self.workflow)
+        self.assertIn("\npermissions: {}\n", self.workflow)
+        # Only the job that publishes may write, and only contents.
+        self.assertEqual(re.findall(r"^ +([a-z-]+): write$", self.workflow, re.MULTILINE),
+                         ["contents"])
+        # GitHub's own actions only, each pinned by a full commit SHA. The release itself is
+        # made with the gh CLI.
+        uses = re.findall(r"uses: (\S+)", self.workflow)
+        self.assertTrue(uses)
+        for action in uses:
+            self.assertRegex(action, r"^actions/[a-z-]+@[0-9a-f]{40}$")
+        self.assertIn('gh release create "$TAG"', self.workflow)
+
+    def test_pull_requests_run_the_check(self):
+        quality = (ROOT / ".github/workflows/quality.yml").read_text(encoding="utf-8")
+        self.assertIn("run: python scripts/version.py check", quality)
+
+
+@unittest.skipUnless(shutil.which("git") and shutil.which("bash"), "requires git and bash")
+class ReleaseCommitTests(unittest.TestCase):
+    """Run aule-release.yml's own git command on a history shaped like this repository's."""
+
+    UPSTREAM = 'cmake_minimum_required(VERSION {cmake})\nset(PROJECT_VER "{version}")\n'
+    AULE = (
+        "cmake_minimum_required(VERSION {cmake})\n# {comment}\n"
+        'set(PROJECT_VER "{version}")  # x-aule-version\n'
+    )
+
+    def setUp(self):
+        workflow = (ROOT / ".github/workflows/aule-release.yml").read_text(encoding="utf-8")
+        self.command = re.search(r"^ +commit=\$\((git log [^)]*)\)$", workflow, re.MULTILINE)[1]
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.repo = Path(directory.name)
+        self.env = {key: value for key, value in os.environ.items()
+                    if not key.startswith("GIT_")}
+        self.env.update({
+            "HOME": directory.name, "XDG_CONFIG_HOME": directory.name, "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_AUTHOR_NAME": "Aule", "GIT_AUTHOR_EMAIL": "test@example.com",
+            "GIT_COMMITTER_NAME": "Aule", "GIT_COMMITTER_EMAIL": "test@example.com",
+        })
+        self.day = 0
+        self.git("init", "--quiet")
+        self.git("symbolic-ref", "HEAD", "refs/heads/aule")
+
+    def git(self, *args, check=True):
+        result = subprocess.run(["git", *args], cwd=self.repo, env=self.env,
+                                capture_output=True, text=True, check=check)
+        return result.stdout.strip()
+
+    def commit(self, subject, cmake=None):
+        """Commit a day after the last commit, writing CMakeLists.txt first when given."""
+        if cmake is not None:
+            (self.repo / "CMakeLists.txt").write_text(cmake, encoding="utf-8")
+        self.day += 1
+        date = f"2026-11-{self.day:02d}T12:00:00+00:00"
+        self.env.update(GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
+        self.git("add", "--all")
+        self.git("commit", "--quiet", "--allow-empty", "-m", subject)
+        return self.git("rev-parse", "HEAD")
+
+    def found(self, command=None):
+        result = subprocess.run(["bash", "-c", command or self.command], cwd=self.repo,
+                                env=self.env, capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+
+    def test_it_names_the_commit_that_set_the_version(self):
+        aule = {"cmake": "3.16", "comment": "Aule's firmware version."}
+        self.commit("chore: upstream 2.6.0", self.UPSTREAM.format(cmake="3.16", version="2.6.0"))
+        self.git("branch", "upstream")
+        self.commit("chore: reset the firmware version to 0.0.1 (#12)",
+                    self.UPSTREAM.format(cmake="3.16", version="0.0.1"))
+        marked = self.commit("feat: report the commit at boot (#13)",
+                             self.AULE.format(version="0.0.1", **aule))
+        with self.subTest("the first release is the change that marked the line"):
+            self.assertEqual(self.found(), marked)
+
+        self.commit("docs: explain flashing (#14)")
+        aule["comment"] = "Written only by scripts/version.py."
+        self.commit("docs: reword the version comment (#15)",
+                    self.AULE.format(version="0.0.1", **aule))
+        with self.subTest("later changes around the line do not count"):
+            self.assertEqual(self.found(), marked)
+
+        released = self.commit("chore(release): 0.0.2 (#16)",
+                               self.AULE.format(version="0.0.2", **aule))
+        self.commit("fix: keep the status LED on (#17)")
+        with self.subTest("a squash-merged release PR, then other merges"):
+            self.assertEqual(self.found(), released)
+
+        # Upstream moves to 2.7.0 and CMake 3.20 after our release. The merge takes CMake 3.20
+        # and keeps our version line.
+        self.git("switch", "--quiet", "upstream")
+        bump = self.commit("chore: upstream 2.7.0",
+                           self.UPSTREAM.format(cmake="3.20", version="2.7.0"))
+        self.git("switch", "--quiet", "aule")
+        self.git("merge", "--quiet", "upstream", check=False)  # The version line conflicts.
+        aule["cmake"] = "3.20"
+        merge = self.commit("chore: merge upstream 2.7.0", self.AULE.format(version="0.0.2", **aule))
+        self.assertEqual(len(self.git("rev-list", "--parents", "-1", merge).split()), 3)
+        with self.subTest("upstream's own version bump has no marker"):
+            self.assertEqual(self.found(), released)
+            # Without the marker in the pattern, git log would name upstream's commit.
+            self.assertEqual(self.found(self.command.replace(".*x-aule-version", "")), bump)
+
+
+if __name__ == "__main__":
+    unittest.main()

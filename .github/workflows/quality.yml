@@ -64,6 +64,8 @@ jobs:
           sudo apt-get install -y libcjson-dev libmbedtls-dev
       - name: Test build tooling
         run: python -m unittest discover -s scripts/tests -v
+      - name: Check the version and changelog
+        run: python scripts/version.py check
       - name: Install Cppcheck
         run: bash scripts/ci/install-cppcheck.sh
       - name: Analyze the Aule board

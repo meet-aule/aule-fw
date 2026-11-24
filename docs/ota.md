@@ -94,7 +94,8 @@ This is a common ESP32 request example. Board, chip and partition values vary by
     "version": "2.5.4",
     "compile_time": "Nov 12 2026T02:00:00Z",
     "idf_version": "v6.1-beta1",
-    "elf_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    "elf_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "commit": "0123456789ab"
   },
   "partition_table": [
     {"label": "nvs", "type": 1, "subtype": 2, "address": 36864, "size": 16384},
@@ -139,6 +140,7 @@ This is a common ESP32 request example. Board, chip and partition values vary by
 | `version` | Request layout `2`, not firmware, transport, activation or MCP version. |
 | `application.version` | Running firmware version. |
 | `application.elf_sha256` | Running build identity; not a downloaded binary checksum. |
+| `application.commit` | Aule's addition: the first 12 characters of the git commit the firmware was built from, or `unknown`. Never compared for updates. |
 | `flash_size` | Bytes, numeric. |
 | `minimum_free_heap_size` | Currently serialized as a **string**; services may also accept historical numeric telemetry. |
 | `chip_info.features` | Hardware bitmask, separate from protocol capabilities. |

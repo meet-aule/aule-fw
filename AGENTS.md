@@ -37,6 +37,7 @@ Read the closest existing implementation before adding a new one. Prefer the nar
 - Guard target-specific features with Kconfig/component rules. Do not assume every target has PSRAM or S3/P4 resources.
 - Do not manually edit generated/vendor output: `build/`, `releases/`, `managed_components/`, `components/`, `sdkconfig*`, `main/assets/lang_config.h`, or generated mmap headers.
 - Format only touched C/C++ files with the repository `.clang-format`; avoid unrelated mass formatting.
+- Never edit version numbers by hand; use `scripts/version.py` (see `RELEASING.md`). `PROJECT_VER` stays digits and dots: the commit is reported separately.
 
 ## Boards and Configuration
 
@@ -89,5 +90,6 @@ The build script changes local `sdkconfig` and build state. Do not assume the bu
 - Code style: `docs/code_style.md`
 - Protocols: `docs/websocket.md`, `docs/mqtt-udp.md`, `docs/mcp-protocol.md`
 - CI matrix: `.github/workflows/build.yml`
+- Versions and releases: `RELEASING.md`
 
 Keep detailed or fast-changing information in those files, not here. Add a nested `AGENTS.md` only when a subsystem needs specialized instructions.
