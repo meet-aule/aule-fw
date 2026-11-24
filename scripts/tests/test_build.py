@@ -863,7 +863,10 @@ class TargetConfigurationTests(unittest.TestCase):
                     encoding="utf-8",
                 )
 
-                with mock.patch.object(build, "_run_idf") as run_idf:
+                with (
+                    mock.patch.object(build, "_run_idf") as run_idf,
+                    mock.patch.object(build, "_get_git_sha", return_value="0123456789ab"),
+                ):
                     build._configure_build(
                         "esp32s3",
                         ["CONFIG_BOARD_TYPE_TEST=y", "CONFIG_FEATURE=y"],
@@ -888,6 +891,7 @@ class TargetConfigurationTests(unittest.TestCase):
                     "-DSDKCONFIG_DEFAULTS="
                     "sdkconfig.defaults;build/xiaozhi-build.sdkconfig.defaults",
                     "-DBOARD_NAME=test-board",
+                    "-DAULE_GIT_SHA=0123456789ab",
                     "reconfigure",
                     preview=False,
                 )

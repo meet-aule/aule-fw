@@ -21,6 +21,10 @@ jobs:
     name: Build ${{ matrix.board }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # The commit the firmware reports and its artifact is named after: a pull request's own
+      # head, which testers can find later, not the temporary merge commit GitHub builds.
+      AULE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
     strategy:
       fail-fast: false
       matrix:
@@ -54,7 +58,7 @@ jobs:
         # Reference boards keep xiaozhi's default server (its cloud): development only.
         run: |
           if [[ "$BOARD" == aule/* ]]; then prefix=aule; else prefix=dev-xiaozhi-cloud; fi
-          echo "value=${prefix}_${BOARD//\//_}_${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "value=${prefix}_${BOARD//\//_}_${AULE_COMMIT::7}" >> "$GITHUB_OUTPUT"
 
       - name: Upload firmware
         uses: actions/upload-artifact@v7

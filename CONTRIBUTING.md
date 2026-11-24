@@ -31,10 +31,17 @@ check out or execute PR code.
 PRs are squash-merged. The default commit subject is the PR title, and its body is
 the PR description. Keep that description focused on the final change and evidence.
 
+## Releases
+
+Versions, the changelog and releases follow [RELEASING.md](RELEASING.md). Never edit
+version numbers by hand: `scripts/version.py` writes them, and it opens release PRs titled
+`chore(release): X.Y.Z`, the one title the check accepts with the version alone.
+
 ## Required checks
 
 - `Firmware CI`: all three Aule/reference-board builds.
-- `Cppcheck and build tooling`: native host tests and Aule source analysis.
+- `Cppcheck and build tooling`: native host tests, the version and changelog check, and Aule
+  source analysis.
 - `Image converter`: the real Pillow conversion path, including resized images,
   transparency, LVGL output, and RLE compression.
 - `PR title`: title format and obvious placeholders.

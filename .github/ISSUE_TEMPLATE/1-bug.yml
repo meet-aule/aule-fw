@@ -36,8 +36,9 @@ body:
   - type: input
     id: version
     attributes:
-      label: Firmware version or commit
-      placeholder: e.g. 2.6.0, or the commit SHA / CI run you flashed
+      label: Firmware version
+      description: The first line the firmware logs at boot (`idf.py monitor`), right after ESP-IDF's own startup lines. If it does not build or boot, the commit you used.
+      placeholder: Aule firmware 0.0.1 (0123456789ab) on aule-v0.2
     validations:
       required: true
   - type: textarea

@@ -55,6 +55,40 @@ def get_project_version() -> Optional[str]:
                 return line.split("\"")[1]
     return None
 
+
+# A full commit SHA, or at least its first 12 characters.
+_GIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{12,40}$")
+# Where a build finds its commit, the most explicit first. AULE_COMMIT is set by whoever knows
+# better than the checkout: CI names a pull request's own head instead of GitHub's temporary
+# merge commit, and a release names the commit it tags. The firmware builder image keeps its
+# revision in FIRMWARE_SOURCE_REVISION because it copies the tree without .git. GitHub Actions
+# sets GITHUB_SHA.
+_GIT_SHA_VARIABLES = ("AULE_COMMIT", "FIRMWARE_SOURCE_REVISION", "GITHUB_SHA")
+
+
+def _get_git_sha() -> str:
+    """Return the first 12 characters of the commit being built, or "unknown".
+
+    Take the first of _GIT_SHA_VARIABLES that holds a commit. Without one, ask git, which
+    fails outside a checkout and, in a container, on a checkout owned by another user.
+    """
+    for name in _GIT_SHA_VARIABLES:
+        sha = os.environ.get(name, "").strip().lower()
+        if _GIT_SHA_PATTERN.fullmatch(sha):
+            return sha[:12]
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return "unknown"
+    sha = result.stdout.strip() if result.returncode == 0 else ""
+    return sha[:12] if _GIT_SHA_PATTERN.fullmatch(sha) else "unknown"
+
+
 def _get_idf_command() -> list[str]:
     """Get the command used to invoke the active ESP-IDF."""
     idf_path = os.environ.get("IDF_PATH")
@@ -1434,7 +1468,7 @@ def _configure_build(
     board_name: str,
     preview: bool,
 ) -> None:
-    """Configure target, board identity and sdkconfig defaults in one CMake run."""
+    """Configure target, board identity, commit and sdkconfig defaults in one CMake run."""
     sdkconfig = Path("sdkconfig")
     sdkconfig_old = Path("sdkconfig.old")
     if sdkconfig.exists():
@@ -1459,6 +1493,8 @@ def _configure_build(
         f"-DIDF_TARGET={target}",
         f"-DSDKCONFIG_DEFAULTS={';'.join(defaults)}",
         f"-DBOARD_NAME={board_name}",
+        # Reported next to PROJECT_VER, never inside it: OTA compares versions as numbers.
+        f"-DAULE_GIT_SHA={_get_git_sha()}",
         "reconfigure",
         preview=preview,
     )
