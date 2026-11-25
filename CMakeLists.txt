@@ -11,5 +11,5 @@ idf_build_set_property(MINIMAL_BUILD ON)
 
 # Aule's firmware version: written only by scripts/version.py (see RELEASING.md).
 # Digits and dots only, because the device's update check compares it as numbers.
-set(PROJECT_VER "0.0.1")  # x-aule-version
+set(PROJECT_VER "0.0.2")  # x-aule-version
 project(xiaozhi)
