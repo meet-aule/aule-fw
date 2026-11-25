@@ -95,16 +95,13 @@ jobs:
         run: |
           source "$IDF_PATH/export.sh"
           python scripts/build.py aule/aule-v0.2 --language es-ES
-      - name: Name the image and write its checksum
+      - name: Package and verify the USB and OTA images
         shell: bash
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          mkdir release
-          cp build/merged-binary.bin "release/aule-v0.2-$VERSION.bin"
-          cd release
-          sha256sum "aule-v0.2-$VERSION.bin" > SHA256SUMS
-          cat SHA256SUMS
+          python scripts/package_aule.py --version "$VERSION"
+          cat release/SHA256SUMS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release
@@ -140,4 +137,4 @@ jobs:
           python3 scripts/version.py section "$VERSION" > "$RUNNER_TEMP/notes.md"
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$COMMIT" \
             --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md" \
-            "release/aule-v0.2-$VERSION.bin" release/SHA256SUMS
+            "release/aule-v0.2-$VERSION.bin" "release/aule-v0.2-$VERSION.ota.bin" release/SHA256SUMS
