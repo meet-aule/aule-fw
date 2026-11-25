@@ -50,8 +50,15 @@ The release PR changes `CMakeLists.txt` on `aule`, which starts the **Aule relea
 (`.github/workflows/aule-release.yml`). It checks the version again, and stops if
 `aule-vX.Y.Z` already exists, so a re-run is harmless. Otherwise it builds `aule/aule-v0.2`
 as `firmware.yml` does from the commit that set the version, tags that commit `aule-vX.Y.Z`,
-and publishes a GitHub Release with that title, its changelog section as the body, and two
-files: `aule-v0.2-X.Y.Z.bin` (the full flash image, written at offset 0x0) and `SHA256SUMS`.
+and publishes a GitHub Release with that title, its changelog section as the body, and three
+files: `aule-v0.2-X.Y.Z.bin` (the full flash image, written at offset 0x0),
+`aule-v0.2-X.Y.Z.ota.bin` (only the application, for OTA), and `SHA256SUMS`.
+`scripts/package_aule.py` checks the application version, chip, slot size and
+byte-for-byte agreement with the application in the full image before packaging.
+The full image is never an OTA payload. Publishing a GitHub release does not
+automatically roll it out: prepare and deploy the OTA Worker's assets from
+`aule-sw/infra/edge` after reviewing the release. Retain old versioned images
+when preparing the next deployment so in-flight downloads can finish.
 
 It runs only in `meet-aule/aule-fw`, only from `aule`, one release at a time, with the
 built-in `GITHUB_TOKEN`. If a run fails, run the workflow again from the Actions tab: it builds

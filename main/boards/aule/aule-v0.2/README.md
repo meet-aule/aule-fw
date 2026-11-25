@@ -16,17 +16,24 @@ The microphone and reference gains in `config.h` are starting values from the bo
 
 ## Server
 
-This build has no hosted OTA endpoint configured. Its default is
-`https://aule.invalid/ota/`: `.invalid` is a [reserved domain](https://www.iana.org/assignments/special-use-domain-names/), so a
-fresh device cannot activate until its operator supplies a server. The Aule
-variant overrides xiaozhi's default cloud and does not fall back to it.
+The default firmware update endpoint is `https://ota.meetaule.com/ota/`.
+It serves the Aule v0.2 application over HTTPS, only when the board matches and
+the published version is newer. It does not force downgrades. This public
+firmware service does not activate a device, link it to a child, or provide a
+voice transport; those remain separate from OTA. The Aule variant overrides
+xiaozhi's default cloud and does not fall back to it.
 
-Run [aule-sw](https://github.com/meet-aule/aule-sw) and expose its `/ota/` routes
-over HTTPS. Set `CONFIG_OTA_URL` in this variant's `config.json` before running
+For a self-hosted service, set `CONFIG_OTA_URL` in this variant's `config.json` before running
 `scripts/build.py`; that file supplies the board's build defaults. When using
 ESP-IDF directly, the setting is in menuconfig under *Xiaozhi Assistant →
 Default OTA URL*. Use the verified HTTPS address of your own deployment; the
-browser tutor URL is not an OTA API.
+browser tutor URL is not an OTA API. The public updater lives in
+[aule-sw/infra/edge](https://github.com/meet-aule/aule-sw/tree/main/infra/edge).
+
+Use the release's `aule-v0.2-X.Y.Z.ota.bin` for OTA. The `.bin` without `.ota`
+is a full USB flash image for offset 0x0 and must never be offered as an OTA
+application. Verify `SHA256SUMS` before publishing. Existing inherited 2.6.0
+firmware needs a USB installation to enter Aule's 0.0.x version line.
 
 A valid URL saved on the device in `wifi.ota_url` takes precedence over the
 compiled default. Rebuilding does not replace that saved setting: update it
