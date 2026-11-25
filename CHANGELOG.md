@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.0.2](https://github.com/meet-aule/aule-fw/compare/aule-v0.0.1...aule-v0.0.2) (2026-11-24)
+
+### Features
+
+* **ota:** configure Aule updater and package application images ([#16](https://github.com/meet-aule/aule-fw/pull/16))
+
+### Bug Fixes
+
+* **aule:** replace obsolete OTA default and remaining branding ([#15](https://github.com/meet-aule/aule-fw/pull/15))
+
 ## 0.0.1 (2026-11-24)
 
 First numbered version. Everything before it is in the git history.
