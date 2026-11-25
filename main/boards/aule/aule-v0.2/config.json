@@ -6,7 +6,7 @@
         {
             "name": "aule-v0.2",
             "sdkconfig_append": [
-                "CONFIG_OTA_URL=\"https://capricorn.meetaule.com/ota/\""
+                "CONFIG_OTA_URL=\"https://aule.invalid/ota/\""
             ]
         }
     ]
