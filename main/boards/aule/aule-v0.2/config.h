@@ -1,4 +1,4 @@
-// Aule board v0.2 (capri-slate v0.2.x touch). Pin map from aule-hw/software.
+// Aule board v0.2 with touch. Pin map from aule-hw/software.
 // Hardware: https://github.com/meet-aule/aule-hw
 #ifndef _BOARD_CONFIG_H_
 #define _BOARD_CONFIG_H_

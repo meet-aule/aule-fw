@@ -16,7 +16,22 @@ The microphone and reference gains in `config.h` are starting values from the bo
 
 ## Server
 
-This build points to Aule's server, `https://capricorn.meetaule.com/ota/`, instead of xiaozhi's default cloud (`api.tenclass.net`), so the device never sends its identifiers or a child's voice to a third party by default. That server is [aule-sw](https://github.com/meet-aule/aule-sw), which answers the check-in and activation calls under `/ota/`. It is not published at that address yet: until it is, the device cannot activate. To use another server, set `CONFIG_OTA_URL` before building (menuconfig, *Xiaozhi Assistant → Default OTA URL*). A URL saved on the device in `wifi.ota_url` takes precedence over it.
+This build has no hosted OTA endpoint configured. Its default is
+`https://aule.invalid/ota/`: `.invalid` is a [reserved domain](https://www.iana.org/assignments/special-use-domain-names/), so a
+fresh device cannot activate until its operator supplies a server. The Aule
+variant overrides xiaozhi's default cloud and does not fall back to it.
+
+Run [aule-sw](https://github.com/meet-aule/aule-sw) and expose its `/ota/` routes
+over HTTPS. Set `CONFIG_OTA_URL` in this variant's `config.json` before running
+`scripts/build.py`; that file supplies the board's build defaults. When using
+ESP-IDF directly, the setting is in menuconfig under *Xiaozhi Assistant →
+Default OTA URL*. Use the verified HTTPS address of your own deployment; the
+browser tutor URL is not an OTA API.
+
+A valid URL saved on the device in `wifi.ota_url` takes precedence over the
+compiled default. Rebuilding does not replace that saved setting: update it
+through the device's provisioning flow when changing servers. Do not erase
+unrelated device settings to change the OTA address.
 
 The reference boards built in CI (Waveshare) keep xiaozhi's default server and are for development only; their artifacts are named `dev-xiaozhi-cloud_*`.
 
